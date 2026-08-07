@@ -3,20 +3,37 @@ import fitz  # PyMuPDF
 import io
 
 def remove_highlights(pdf_bytes):
-    # פתיחת קובץ ה-PDF מתוך הזיכרון
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     
-    # מעבר על כל העמודים במסמך
     for page in doc:
-        # מעבר על כל ההערות (Annotations) בעמוד
+        # 1. מחיקת הערות רגילות (לכל מקרה, אם נשארו כאלה)
         annot = page.first_annot
         while annot:
             next_annot = annot.next
-            # מוחק את ההערה מבלי לבדוק איזה סוג היא
             page.delete_annot(annot)
             annot = next_annot
             
-    # שמירת הקובץ המעודכן לתוך אובייקט זיכרון חדש
+        # 2. ה"קסם": טיפול במרקרים וקטוריים ("אפויים")
+        # מעבר על כל חלקי הקוד הפנימי (Content Streams) של העמוד
+        for xref in page.get_contents():
+            stream = doc.xref_stream(xref)
+            if stream:
+                # המרת הקוד לטקסט שניתן לקרוא
+                stream_str = stream.decode("latin1")
+                
+                # בשפת ה-PDF, צבע מוגדר על ידי RGB. צהוב מלא הוא 1 1 0.
+                # rg = צבע מילוי (Fill), RG = צבע קו (Stroke)
+                # אנחנו מחליפים את הצהוב בלבן מלא (1 1 1) כדי להעלים אותו
+                stream_str = stream_str.replace("1 1 0 rg", "1 1 1 rg")
+                stream_str = stream_str.replace("1 1 0 RG", "1 1 1 RG")
+                
+                # למקרה שהתוכנה כתבה את המספרים כעשרוניים:
+                stream_str = stream_str.replace("1.0 1.0 0.0 rg", "1.0 1.0 1.0 rg")
+                stream_str = stream_str.replace("1.0 1.0 0.0 RG", "1.0 1.0 1.0 RG")
+                
+                # עדכון הקוד חזרה לתוך העמוד
+                doc.update_stream(xref, stream_str.encode("latin1"))
+
     output_pdf = io.BytesIO()
     doc.save(output_pdf)
     doc.close()
