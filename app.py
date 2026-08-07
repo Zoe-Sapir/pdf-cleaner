@@ -12,9 +12,8 @@ def remove_highlights(pdf_bytes):
         annot = page.first_annot
         while annot:
             next_annot = annot.next
-            # סוג 8 מייצג בדרך כלל סימוני הדגשה (Highlight) ב-PDF
-            if annot.type[0] == 8: 
-                page.delete_annot(annot)
+            # מוחק את ההערה מבלי לבדוק איזה סוג היא
+            page.delete_annot(annot)
             annot = next_annot
             
     # שמירת הקובץ המעודכן לתוך אובייקט זיכרון חדש
