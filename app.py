@@ -1,6 +1,7 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import io
+import re
 
 # --- מילון המרה מורחב (כולל נקודות הפוכות וסוגריים) ---
 hebrew_to_english = {
@@ -11,6 +12,23 @@ hebrew_to_english = {
     '(א)': '(A)', '(ב)': '(B)', '(ג)': '(C)', '(ד)': '(D)', '(ה)': '(E)', '(ו)': '(F)'
 }
 
+# --- פונקציה חכמה לזיהוי והעלמת צבעים ---
+def clean_color(match):
+    c = match.group(0)
+    parts = c.split()
+    try:
+        r, g, b = float(parts[0]), float(parts[1]), float(parts[2])
+        op = parts[3]
+        
+        # אם הצבע הוא שחור מוחלט או לבן מוחלט - לא נוגעים בו
+        if (r == 0.0 and g == 0.0 and b == 0.0) or (r == 1.0 and g == 1.0 and b == 1.0):
+            return c
+            
+        # כל צבע אחר (ירוק, צהוב, ורוד, כחול) יוחלף ללבן כדי להעלים אותו
+        return f"1 1 1 {op}"
+    except:
+        return c
+
 def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     
@@ -18,16 +36,14 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
     current_y = 0
     
     for page in doc:
-        # --- 1. מחיקת מרקרים צהובים ---
+        # --- 1. מחיקת כל המסגרות והמרקרים הצבעוניים (שודרג!) ---
         if remove_markers:
             for xref in page.get_contents():
                 stream = doc.xref_stream(xref)
                 if stream:
                     stream_str = stream.decode("latin1")
-                    stream_str = stream_str.replace("1 1 0 rg", "1 1 1 rg")
-                    stream_str = stream_str.replace("1 1 0 RG", "1 1 1 RG")
-                    stream_str = stream_str.replace("1.0 1.0 0.0 rg", "1.0 1.0 1.0 rg")
-                    stream_str = stream_str.replace("1.0 1.0 0.0 RG", "1.0 1.0 1.0 RG")
+                    # מחפש קודי צבע בקובץ ומעביר אותם לפונקציית הניקוי שלנו
+                    stream_str = re.sub(r'\b\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+(?:RG|rg)\b', clean_color, stream_str)
                     doc.update_stream(xref, stream_str.encode("latin1"))
                     
         # --- 2. המרת אותיות התשובה לאנגלית ---
@@ -56,7 +72,7 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
                                 new_text = " ".join(new_words)
                                 page.insert_text(origin, new_text, fontsize=12, color=(0, 0, 0))
                                 
-        # --- 3. העלמת פתרונות (תוקן הבאג של מחיקת התשובות הצמודות) ---
+        # --- 3. העלמת פתרונות ---
         if hide_solutions:
             sol_rects = page.search_for("פתרון")
             q_rects = page.search_for("שאלה")
@@ -72,7 +88,6 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
             for y0, event_type, r in events:
                 if event_type == 'start' and not hide_active:
                     hide_active = True
-                    # הקטנו את השוליים מימין ל-2 פיקסלים בלבד (r.x1 + 2) כדי לא לדרוס תשובות
                     rects_to_hide.append(fitz.Rect(0, r.y0 - 2, r.x1 + 2, r.y1 + 2))
                     current_y = r.y1 + 2
                 elif event_type == 'end' and hide_active:
@@ -96,7 +111,7 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
 st.title("מנקה המבחנים האולטימטיבי 📄✨")
 st.write("העלה קובץ PDF ובחר אילו פעולות תרצה לבצע עליו כדי להכין אותו לתרגול.")
 
-remove_markers_cb = st.checkbox("מחק מרקרים צהובים", value=True)
+remove_markers_cb = st.checkbox("מחק מרקרים, מסגרות וסימונים צבעוניים", value=True)
 shrink_letters_cb = st.checkbox("החלף את כל אותיות התשובה (א, ב, ג...) לאנגלית (A, B, C...) ויישר את גודלן", value=True)
 hide_solutions_cb = st.checkbox("הסתר את הפתרונות המלאים (ממחק מהמילה 'פתרון' ועד 'שאלה' הבאה)", value=True)
 
