@@ -1,17 +1,12 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import io
-import os
-import urllib.request
 
-# --- הורדת גופן לעברית במידה וחסר ---
-FONT_PATH = "Arimo-Regular.ttf"
-if not os.path.exists(FONT_PATH):
-    # שימוש בקישור ישיר לקובץ והוספת User-Agent למניעת חסימה
-    url = "https://raw.githubusercontent.com/google/fonts/main/ofl/arimo/Arimo-Regular.ttf"
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req) as response, open(FONT_PATH, 'wb') as out_file:
-        out_file.write(response.read())
+# --- מילון המרה מאותיות בעברית לאנגלית ---
+hebrew_to_english = {
+    'א': 'A', 'ב': 'B', 'ג': 'C', 'ד': 'D', 'ה': 'E', 'ו': 'F',
+    'א.': 'A.', 'ב.': 'B.', 'ג.': 'C.', 'ד.': 'D.', 'ה.': 'E.', 'ו.': 'F.'
+}
 
 def process_pdf(pdf_bytes, remove_markers, shrink_letters):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -30,7 +25,7 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters):
                     stream_str = stream_str.replace("1.0 1.0 0.0 RG", "1.0 1.0 1.0 RG")
                     doc.update_stream(xref, stream_str.encode("latin1"))
                     
-        # --- 2. הקטנת אותיות מוגדלות (טקסט) ---
+        # --- 2. החלפת אותיות מוגדלות לאנגלית (A-E) ---
         if shrink_letters:
             dict_data = page.get_text("dict")
             for block in dict_data["blocks"]:
@@ -39,19 +34,28 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters):
                         for span in line["spans"]:
                             # בדיקה האם גודל הגופן חריג (גדול מ-18)
                             if span["size"] > 18:
-                                # הרחבת הריבוע הלבן כדי לוודא שלא נשארים פיקסלים שחורים
+                                # הרחבת הריבוע הלבן כדי למחוק שאריות של האות המקורית
                                 rect = fitz.Rect(span["bbox"])
                                 rect = rect + (-2, -2, 2, 2) 
                                 
-                                text = span["text"].strip()
-                                origin = span["origin"] # נקודת העיגון המדויקת של האות
+                                original_text = span["text"].strip()
+                                origin = span["origin"] # נקודת העיגון של האות
                                 
-                                if text:
-                                    # ציור המלבן הלבן
+                                if original_text:
+                                    # ציור המלבן הלבן להסתרת האות בעברית
                                     page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
                                     
-                                    # כתיבת האות מחדש עם גופן התומך בעברית ויישור מדויק
-                                    page.insert_text(origin, text, fontsize=12, fontfile=FONT_PATH, color=(0, 0, 0))
+                                    # המרה לאנגלית בעזרת המילון
+                                    # שימוש בפונקציית get - אם התו לא במילון, הוא ישאיר אותו כמו שהוא
+                                    new_text = hebrew_to_english.get(original_text, original_text)
+                                    
+                                    # למקרה שיש רווחים נסתרים בתוך הטקסט
+                                    if new_text == original_text:
+                                        clean_text = original_text.replace(" ", "")
+                                        new_text = hebrew_to_english.get(clean_text, clean_text)
+                                    
+                                    # כתיבת האות החדשה באנגלית, בגודל נורמלי
+                                    page.insert_text(origin, new_text, fontsize=12, color=(0, 0, 0))
                                     
     output_pdf = io.BytesIO()
     doc.save(output_pdf)
@@ -65,7 +69,7 @@ st.write("העלה קובץ PDF ובחר אילו פעולות תרצה לבצע
 
 # אפשרויות בחירה למשתמש (Checkboxes)
 remove_markers_cb = st.checkbox("מחק מרקרים צהובים", value=True)
-shrink_letters_cb = st.checkbox("הקטן אותיות תשובה מוגדלות (א, ב, ג...)", value=True)
+shrink_letters_cb = st.checkbox("החלף אותיות תשובה מוגדלות (א, ב, ג...) ל-(A, B, C...)", value=True)
 
 # כפתור העלאת קובץ
 uploaded_file = st.file_uploader("בחר קובץ PDF", type="pdf")
