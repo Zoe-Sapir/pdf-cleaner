@@ -12,7 +12,7 @@ hebrew_to_english = {
     '(א)': '(A)', '(ב)': '(B)', '(ג)': '(C)', '(ד)': '(D)', '(ה)': '(E)', '(ו)': '(F)'
 }
 
-# --- הגדרת תבניות חכמות לזיהוי מספרים ב-PDF (כולל שברים עשרוניים ללא אפס מוביל) ---
+# --- הגדרת תבניות חכמות לזיהוי צבעים ---
 NUM = r'[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)'
 RGB_PATTERN = re.compile(rf'\b({NUM})\s+({NUM})\s+({NUM})\s+(rg|RG)\b')
 CMYK_PATTERN = re.compile(rf'\b({NUM})\s+({NUM})\s+({NUM})\s+({NUM})\s+(k|K)\b')
@@ -44,17 +44,21 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
     current_y = 0
     
     for page in doc:
-        # --- 1. מחיקת מרקרים, מסגרות וכל צבע שהוא לא שחור/לבן ---
+        
+        # --- 1. מחיקת מרקרים, מסגרות וצורות ---
         if remove_markers:
+            annot = page.first_annot
+            while annot:
+                next_annot = annot.next
+                page.delete_annot(annot)
+                annot = next_annot
+                
             for xref in page.get_contents():
                 stream = doc.xref_stream(xref)
                 if stream:
                     stream_str = stream.decode("latin1")
-                    # ניקוי צבעי RGB
                     stream_str = RGB_PATTERN.sub(clean_rgb, stream_str)
-                    # ניקוי צבעי הדפסה CMYK
                     stream_str = CMYK_PATTERN.sub(clean_cmyk, stream_str)
-                    
                     doc.update_stream(xref, stream_str.encode("latin1"))
                     
         # --- 2. המרת אותיות ומחיקת קווים תחתונים ---
@@ -80,10 +84,10 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
                                 rect = fitz.Rect(span["bbox"])
                                 origin = span["origin"]
                                 
-                                # מתיחת הריבוע הלבן כלפי מטה כדי "לבלוע" את הקו התחתון (Underline)
-                                rect.y1 += 2.5
-                                rect.x0 -= 1
-                                rect.x1 += 1
+                                # הגדלנו את המרווחים כדי לבלוע קווים עקשניים
+                                rect.y1 += 5.0
+                                rect.x0 -= 2.0
+                                rect.x1 += 2.0
                                 
                                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
                                 new_text = " ".join(new_words)
