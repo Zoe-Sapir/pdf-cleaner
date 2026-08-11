@@ -3,7 +3,7 @@ import fitz  # PyMuPDF
 import io
 import re
 
-# --- מילון המרה מורחב (כולל נקודות הפוכות וסוגריים) ---
+# --- מילון המרה מורחב ---
 hebrew_to_english = {
     'א': 'A', 'ב': 'B', 'ג': 'C', 'ד': 'D', 'ה': 'E', 'ו': 'F',
     'א.': 'A.', 'ב.': 'B.', 'ג.': 'C.', 'ד.': 'D.', 'ה.': 'E.', 'ו.': 'F.',
@@ -12,22 +12,30 @@ hebrew_to_english = {
     '(א)': '(A)', '(ב)': '(B)', '(ג)': '(C)', '(ד)': '(D)', '(ה)': '(E)', '(ו)': '(F)'
 }
 
-# --- פונקציה חכמה לזיהוי והעלמת צבעים ---
-def clean_color(match):
-    c = match.group(0)
-    parts = c.split()
+# --- הגדרת תבניות חכמות לזיהוי מספרים ב-PDF (כולל שברים עשרוניים ללא אפס מוביל) ---
+NUM = r'[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)'
+RGB_PATTERN = re.compile(rf'\b({NUM})\s+({NUM})\s+({NUM})\s+(rg|RG)\b')
+CMYK_PATTERN = re.compile(rf'\b({NUM})\s+({NUM})\s+({NUM})\s+({NUM})\s+(k|K)\b')
+
+def clean_rgb(match):
     try:
-        r, g, b = float(parts[0]), float(parts[1]), float(parts[2])
-        op = parts[3]
-        
-        # אם הצבע הוא שחור מוחלט או לבן מוחלט - לא נוגעים בו
+        r, g, b = float(match.group(1)), float(match.group(2)), float(match.group(3))
+        op = match.group(4)
         if (r == 0.0 and g == 0.0 and b == 0.0) or (r == 1.0 and g == 1.0 and b == 1.0):
-            return c
-            
-        # כל צבע אחר (ירוק, צהוב, ורוד, כחול) יוחלף ללבן כדי להעלים אותו
+            return match.group(0)
         return f"1 1 1 {op}"
     except:
-        return c
+        return match.group(0)
+
+def clean_cmyk(match):
+    try:
+        c, m, y, k = float(match.group(1)), float(match.group(2)), float(match.group(3)), float(match.group(4))
+        op = match.group(5)
+        if (c == 0.0 and m == 0.0 and y == 0.0 and k == 1.0) or (c == 0.0 and m == 0.0 and y == 0.0 and k == 0.0):
+            return match.group(0)
+        return f"0 0 0 0 {op}"
+    except:
+        return match.group(0)
 
 def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -36,17 +44,20 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
     current_y = 0
     
     for page in doc:
-        # --- 1. מחיקת כל המסגרות והמרקרים הצבעוניים (שודרג!) ---
+        # --- 1. מחיקת מרקרים, מסגרות וכל צבע שהוא לא שחור/לבן ---
         if remove_markers:
             for xref in page.get_contents():
                 stream = doc.xref_stream(xref)
                 if stream:
                     stream_str = stream.decode("latin1")
-                    # מחפש קודי צבע בקובץ ומעביר אותם לפונקציית הניקוי שלנו
-                    stream_str = re.sub(r'\b\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+(?:RG|rg)\b', clean_color, stream_str)
+                    # ניקוי צבעי RGB
+                    stream_str = RGB_PATTERN.sub(clean_rgb, stream_str)
+                    # ניקוי צבעי הדפסה CMYK
+                    stream_str = CMYK_PATTERN.sub(clean_cmyk, stream_str)
+                    
                     doc.update_stream(xref, stream_str.encode("latin1"))
                     
-        # --- 2. המרת אותיות התשובה לאנגלית ---
+        # --- 2. המרת אותיות ומחיקת קווים תחתונים ---
         if shrink_letters:
             dict_data = page.get_text("dict")
             for block in dict_data["blocks"]:
@@ -68,6 +79,12 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
                             if replaced:
                                 rect = fitz.Rect(span["bbox"])
                                 origin = span["origin"]
+                                
+                                # מתיחת הריבוע הלבן כלפי מטה כדי "לבלוע" את הקו התחתון (Underline)
+                                rect.y1 += 2.5
+                                rect.x0 -= 1
+                                rect.x1 += 1
+                                
                                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
                                 new_text = " ".join(new_words)
                                 page.insert_text(origin, new_text, fontsize=12, color=(0, 0, 0))
@@ -112,7 +129,7 @@ st.title("מנקה המבחנים האולטימטיבי 📄✨")
 st.write("העלה קובץ PDF ובחר אילו פעולות תרצה לבצע עליו כדי להכין אותו לתרגול.")
 
 remove_markers_cb = st.checkbox("מחק מרקרים, מסגרות וסימונים צבעוניים", value=True)
-shrink_letters_cb = st.checkbox("החלף את כל אותיות התשובה (א, ב, ג...) לאנגלית (A, B, C...) ויישר את גודלן", value=True)
+shrink_letters_cb = st.checkbox("החלף את כל אותיות התשובה (א, ב, ג...) לאנגלית (A, B, C...) ומחק קווים תחתונים", value=True)
 hide_solutions_cb = st.checkbox("הסתר את הפתרונות המלאים (ממחק מהמילה 'פתרון' ועד 'שאלה' הבאה)", value=True)
 
 uploaded_file = st.file_uploader("בחר קובץ PDF", type="pdf")
