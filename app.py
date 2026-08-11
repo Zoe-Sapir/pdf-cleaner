@@ -1,6 +1,14 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import io
+import os
+import urllib.request
+
+# --- הורדת גופן לעברית במידה וחסר ---
+FONT_PATH = "Arimo-Regular.ttf"
+if not os.path.exists(FONT_PATH):
+    url = "https://github.com/google/fonts/raw/main/ofl/arimo/Arimo-Regular.ttf"
+    urllib.request.urlretrieve(url, FONT_PATH)
 
 def process_pdf(pdf_bytes, remove_markers, shrink_letters):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -28,15 +36,19 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters):
                         for span in line["spans"]:
                             # בדיקה האם גודל הגופן חריג (גדול מ-18)
                             if span["size"] > 18:
+                                # הרחבת הריבוע הלבן כדי לוודא שלא נשארים פיקסלים שחורים
                                 rect = fitz.Rect(span["bbox"])
-                                text = span["text"].strip()
+                                rect = rect + (-2, -2, 2, 2) 
                                 
-                                if text: # אם אכן יש שם טקסט
-                                    # שלב א': ציור מלבן לבן כדי להעלים את האות הענקית
+                                text = span["text"].strip()
+                                origin = span["origin"] # נקודת העיגון המדויקת של האות
+                                
+                                if text:
+                                    # ציור המלבן הלבן
                                     page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
                                     
-                                    # שלב ב': כתיבת האות מחדש באותו מקום, בגודל נורמלי
-                                    page.insert_text((rect.x0, rect.y1 - 2), text, fontsize=12, color=(0, 0, 0))
+                                    # כתיבת האות מחדש עם גופן התומך בעברית ויישור מדויק
+                                    page.insert_text(origin, text, fontsize=12, fontfile=FONT_PATH, color=(0, 0, 0))
                                     
     output_pdf = io.BytesIO()
     doc.save(output_pdf)
