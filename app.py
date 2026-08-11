@@ -7,8 +7,11 @@ import urllib.request
 # --- הורדת גופן לעברית במידה וחסר ---
 FONT_PATH = "Arimo-Regular.ttf"
 if not os.path.exists(FONT_PATH):
-    url = "https://github.com/google/fonts/raw/main/ofl/arimo/Arimo-Regular.ttf"
-    urllib.request.urlretrieve(url, FONT_PATH)
+    # שימוש בקישור ישיר לקובץ והוספת User-Agent למניעת חסימה
+    url = "https://raw.githubusercontent.com/google/fonts/main/ofl/arimo/Arimo-Regular.ttf"
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req) as response, open(FONT_PATH, 'wb') as out_file:
+        out_file.write(response.read())
 
 def process_pdf(pdf_bytes, remove_markers, shrink_letters):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
