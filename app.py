@@ -3,9 +3,8 @@ import fitz  # PyMuPDF
 import io
 import re
 
-# --- מילון המרה מורחב ---
+# --- מילון המרה מורחב וחכם (ללא אותיות בודדות כדי למנוע החלפת מילים כמו מ"ו) ---
 hebrew_to_english = {
-    'א': 'A', 'ב': 'B', 'ג': 'C', 'ד': 'D', 'ה': 'E', 'ו': 'F',
     'א.': 'A.', 'ב.': 'B.', 'ג.': 'C.', 'ד.': 'D.', 'ה.': 'E.', 'ו.': 'F.',
     '.א': '.A', '.ב': '.B', '.ג': '.C', '.ד': '.D', '.ה': '.E', '.ו': '.F',
     'א)': 'A)', 'ב)': 'B)', 'ג)': 'C)', 'ד)': 'D)', 'ה)': 'E)', 'ו)': 'F)',
@@ -64,19 +63,17 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
                     for line in block["lines"]:
                         for span in line["spans"]:
                             original_text = span["text"].strip()
-                            # מסירים רווחים רק לצורך הבדיקה
                             clean_text = original_text.replace(" ", "")
                             
-                            # התיקון הקריטי: מחליפים רק אם *כל* קטע הטקסט הוא אות תשובה בלבד!
-                            # זה מונע מחיקה של משפטים שלמים כמו "סעיף א"
+                            # הבדיקה עכשיו בטוחה לגמרי כי המילון מכיל רק תבניות עם נקודה/סוגריים
                             if clean_text in hebrew_to_english:
                                 rect = fitz.Rect(span["bbox"])
                                 origin = span["origin"]
                                 
-                                # הקטנו את הריבוע חזרה כדי שלא יאכל מטריצות בשורה למטה
-                                rect.y1 += 2.0
-                                rect.x0 -= 1.0
-                                rect.x1 += 1.0
+                                # החזרנו את שטח הפגיעה בדיוק למה שביקשת (5.0 פיקסלים למטה)
+                                rect.y1 += 5.0
+                                rect.x0 -= 2.0
+                                rect.x1 += 2.0
                                 
                                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
                                 new_text = hebrew_to_english[clean_text]
@@ -131,7 +128,7 @@ if uploaded_file is not None:
     st.success("הקובץ הועלה בהצלחה!")
     
     if st.button("נקה את המבחן"):
-        with st.spinner("מעבד את הקובץ (מפעיל אלגוריתם מתוקן להגנה על משפטים ומטריצות)..."):
+        with st.spinner("מעבד את הקובץ (עם מילון חכם ושטח פגיעה מתוקן)..."):
             
             cleaned_pdf_bytes = process_pdf(
                 uploaded_file.read(), 
