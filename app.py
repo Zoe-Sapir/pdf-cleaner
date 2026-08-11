@@ -25,37 +25,31 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters):
                     stream_str = stream_str.replace("1.0 1.0 0.0 RG", "1.0 1.0 1.0 RG")
                     doc.update_stream(xref, stream_str.encode("latin1"))
                     
-        # --- 2. החלפת אותיות מוגדלות לאנגלית (A-E) ---
+        # --- 2. המרת כל אותיות התשובה לאנגלית (וגם הקטנה של המוגדלות) ---
         if shrink_letters:
             dict_data = page.get_text("dict")
             for block in dict_data["blocks"]:
                 if "lines" in block:
                     for line in block["lines"]:
                         for span in line["spans"]:
-                            # בדיקה האם גודל הגופן חריג (גדול מ-18)
-                            if span["size"] > 18:
-                                # הרחבת הריבוע הלבן כדי למחוק שאריות של האות המקורית
+                            original_text = span["text"].strip()
+                            clean_text = original_text.replace(" ", "") # ניקוי רווחים נסתרים
+                            
+                            # בדיקה האם רסיס הטקסט הוא אחת מאותיות התשובה במילון שלנו
+                            if clean_text in hebrew_to_english:
+                                
+                                # שימוש בגבולות המדויקים של האות בלבד, בלי שוליים שדורסים טקסט!
                                 rect = fitz.Rect(span["bbox"])
-                                rect = rect + (-2, -2, 2, 2) 
+                                origin = span["origin"]
                                 
-                                original_text = span["text"].strip()
-                                origin = span["origin"] # נקודת העיגון של האות
+                                # ציור המלבן הלבן המדויק להסתרת האות בעברית (גדולה או קטנה)
+                                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
                                 
-                                if original_text:
-                                    # ציור המלבן הלבן להסתרת האות בעברית
-                                    page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-                                    
-                                    # המרה לאנגלית בעזרת המילון
-                                    # שימוש בפונקציית get - אם התו לא במילון, הוא ישאיר אותו כמו שהוא
-                                    new_text = hebrew_to_english.get(original_text, original_text)
-                                    
-                                    # למקרה שיש רווחים נסתרים בתוך הטקסט
-                                    if new_text == original_text:
-                                        clean_text = original_text.replace(" ", "")
-                                        new_text = hebrew_to_english.get(clean_text, clean_text)
-                                    
-                                    # כתיבת האות החדשה באנגלית, בגודל נורמלי
-                                    page.insert_text(origin, new_text, fontsize=12, color=(0, 0, 0))
+                                # המרה לאנגלית בעזרת המילון
+                                new_text = hebrew_to_english[clean_text]
+                                
+                                # כתיבת האות החדשה באנגלית, תמיד בגודל נורמלי ואחיד
+                                page.insert_text(origin, new_text, fontsize=12, color=(0, 0, 0))
                                     
     output_pdf = io.BytesIO()
     doc.save(output_pdf)
@@ -69,7 +63,7 @@ st.write("העלה קובץ PDF ובחר אילו פעולות תרצה לבצע
 
 # אפשרויות בחירה למשתמש (Checkboxes)
 remove_markers_cb = st.checkbox("מחק מרקרים צהובים", value=True)
-shrink_letters_cb = st.checkbox("החלף אותיות תשובה מוגדלות (א, ב, ג...) ל-(A, B, C...)", value=True)
+shrink_letters_cb = st.checkbox("החלף את כל אותיות התשובה (א, ב, ג...) לאנגלית (A, B, C...) ויישר את גודלן", value=True)
 
 # כפתור העלאת קובץ
 uploaded_file = st.file_uploader("בחר קובץ PDF", type="pdf")
