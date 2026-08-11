@@ -2,7 +2,7 @@ import streamlit as st
 import fitz  # PyMuPDF
 import io
 
-# --- מילון המרה מורחב (כולל נקודות הפוכות וסוגריים למקרה שה-PDF התבלבל בכיווניות) ---
+# --- מילון המרה מורחב (כולל נקודות הפוכות וסוגריים) ---
 hebrew_to_english = {
     'א': 'A', 'ב': 'B', 'ג': 'C', 'ד': 'D', 'ה': 'E', 'ו': 'F',
     'א.': 'A.', 'ב.': 'B.', 'ג.': 'C.', 'ד.': 'D.', 'ה.': 'E.', 'ו.': 'F.',
@@ -18,7 +18,7 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
     current_y = 0
     
     for page in doc:
-        # --- 1. מחיקת מרקרים צהובים (צורות וקטוריות) ---
+        # --- 1. מחיקת מרקרים צהובים ---
         if remove_markers:
             for xref in page.get_contents():
                 stream = doc.xref_stream(xref)
@@ -30,7 +30,7 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
                     stream_str = stream_str.replace("1.0 1.0 0.0 RG", "1.0 1.0 1.0 RG")
                     doc.update_stream(xref, stream_str.encode("latin1"))
                     
-        # --- 2. המרת אותיות התשובה לאנגלית בצורה חכמה ---
+        # --- 2. המרת אותיות התשובה לאנגלית ---
         if shrink_letters:
             dict_data = page.get_text("dict")
             for block in dict_data["blocks"]:
@@ -38,8 +38,6 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
                     for line in block["lines"]:
                         for span in line["spans"]:
                             original_text = span["text"].strip()
-                            
-                            # מפרקים את הטקסט למילים בודדות, כדי להפריד מספרים מאותיות
                             words = original_text.split()
                             replaced = False
                             new_words = []
@@ -54,15 +52,11 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
                             if replaced:
                                 rect = fitz.Rect(span["bbox"])
                                 origin = span["origin"]
-                                
-                                # מסתירים את כל הגוש הישן
                                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-                                
-                                # מחברים את המילים חזרה עם האות באנגלית, ומדפיסים באותו מקום
                                 new_text = " ".join(new_words)
                                 page.insert_text(origin, new_text, fontsize=12, color=(0, 0, 0))
                                 
-        # --- 3. העלמת פתרונות בצורה מודעת לכיווניות העברית ---
+        # --- 3. העלמת פתרונות (תוקן הבאג של מחיקת התשובות הצמודות) ---
         if hide_solutions:
             sol_rects = page.search_for("פתרון")
             q_rects = page.search_for("שאלה")
@@ -78,13 +72,12 @@ def process_pdf(pdf_bytes, remove_markers, shrink_letters, hide_solutions):
             for y0, event_type, r in events:
                 if event_type == 'start' and not hide_active:
                     hide_active = True
-                    # מוחק מהמילה "פתרון" ועד הקצה השמאלי (x=0). לא נוגע בטקסט שמימין למילה!
-                    rects_to_hide.append(fitz.Rect(0, r.y0 - 5, r.x1 + 15, r.y1 + 5))
-                    # הפעולה הבאה (רוחב מלא) תתחיל רק מהשורה שמתחת
-                    current_y = r.y1 + 5
+                    # הקטנו את השוליים מימין ל-2 פיקסלים בלבד (r.x1 + 2) כדי לא לדרוס תשובות
+                    rects_to_hide.append(fitz.Rect(0, r.y0 - 2, r.x1 + 2, r.y1 + 2))
+                    current_y = r.y1 + 2
                 elif event_type == 'end' and hide_active:
                     hide_active = False
-                    rects_to_hide.append(fitz.Rect(0, current_y, page.rect.width, max(0, r.y0 - 5)))
+                    rects_to_hide.append(fitz.Rect(0, current_y, page.rect.width, max(0, r.y0 - 2)))
                     current_y = None
                     
             if hide_active and current_y is not None:
