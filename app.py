@@ -1,6 +1,7 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import io
+import re
 
 # --- מילון המרה מורחב וחכם ---
 hebrew_to_english = {
@@ -10,64 +11,78 @@ hebrew_to_english = {
     '(א)': '(A)', '(ב)': '(B)', '(ג)': '(C)', '(ד)': '(D)', '(ה)': '(E)', '(ו)': '(F)'
 }
 
-def process_pdf(pdf_bytes, remove_yellow_only, remove_all_colors, shrink_letters, hide_solutions):
+# --- הגדרת תבניות חכמות לזיהוי צבעים (ללא ציור צורות חדשות!) ---
+NUM = r'[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)'
+RGB_PATTERN = re.compile(rf'\b({NUM})\s+({NUM})\s+({NUM})\s+(rg|RG)\b')
+CMYK_PATTERN = re.compile(rf'\b({NUM})\s+({NUM})\s+({NUM})\s+({NUM})\s+(k|K)\b')
+
+def process_pdf(pdf_bytes, remove_yellow_cb, remove_all_cb, shrink_letters_cb, hide_solutions_cb):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     
     hide_active = False 
     current_y = 0
     
     for page in doc:
-        # --- 1. מחיקת צורות, מרקרים ומסגרות (לפי בחירת המשתמש) ---
-        if remove_yellow_only or remove_all_colors:
+        # --- 1. מחיקת מרקרים וצבעים (בשינוי קוד פנימי בלבד למניעת הסתרת טקסט) ---
+        if remove_yellow_cb or remove_all_cb:
+            
+            # א. מחיקת הערות מרקר קלאסיות
             annot = page.first_annot
             while annot:
                 next_annot = annot.next
                 page.delete_annot(annot)
                 annot = next_annot
                 
-            paths = page.get_drawings()
-            for p in paths:
-                color = p.get("color")
-                fill = p.get("fill")
-                
-                def should_remove(c):
-                    if c is None: return False
-                    r, g, b = c
+            # ב. פונקציות שמחליטות איזה צבע לשנות ללבן
+            def clean_rgb(match):
+                try:
+                    r, g, b = float(match.group(1)), float(match.group(2)), float(match.group(3))
+                    op = match.group(4)
                     
-                    if remove_all_colors:
-                        # מוחק כל צבע שהוא לא שחור או לבן מוחלט
-                        if c == (0.0, 0.0, 0.0) or c == (1.0, 1.0, 1.0): return False
-                        return True
-                    elif remove_yellow_only:
-                        # מוחק אך ורק צהוב (כמו מרקרים בפיזיקה)
-                        return (r > 0.8 and g > 0.8 and b < 0.5)
+                    # לעולם אל תיגע בשחור או לבן
+                    if (r == 0.0 and g == 0.0 and b == 0.0) or (r == 1.0 and g == 1.0 and b == 1.0):
+                        return match.group(0)
                         
-                    return False
+                    if remove_all_cb:
+                        return f"1 1 1 {op}"
+                    elif remove_yellow_cb:
+                        # זיהוי צהוב-מרקר
+                        if r > 0.8 and g > 0.8 and b < 0.5:
+                            return f"1 1 1 {op}"
+                            
+                    return match.group(0)
+                except:
+                    return match.group(0)
+
+            def clean_cmyk(match):
+                try:
+                    c, m, y, k = float(match.group(1)), float(match.group(2)), float(match.group(3)), float(match.group(4))
+                    op = match.group(5)
                     
-                if should_remove(color) or should_remove(fill):
-                    shape = page.new_shape()
-                    for item in p["items"]:
-                        if item[0] == "l": 
-                            shape.draw_line(item[1], item[2])
-                        elif item[0] == "re": 
-                            shape.draw_rect(item[1])
-                        elif item[0] == "c": 
-                            shape.draw_bezier(item[1], item[2], item[3], item[4])
-                        elif item[0] == "q": 
-                            shape.draw_quad(item[1])
-                    
-                    original_width = p.get("width")
-                    safe_width = original_width if original_width is not None else 1.0
-                    
-                    shape.finish(
-                        color=(1, 1, 1) if color else None,
-                        fill=(1, 1, 1) if fill else None,
-                        width=safe_width + 1.0
-                    )
-                    shape.commit()
+                    if (c == 0.0 and m == 0.0 and y == 0.0 and k == 1.0) or (c == 0.0 and m == 0.0 and y == 0.0 and k == 0.0):
+                        return match.group(0)
+                        
+                    if remove_all_cb:
+                        return f"0 0 0 0 {op}"
+                    elif remove_yellow_cb:
+                        if c < 0.2 and m < 0.2 and y > 0.8 and k < 0.2:
+                            return f"0 0 0 0 {op}"
+                            
+                    return match.group(0)
+                except:
+                    return match.group(0)
+
+            # ג. החלת הניקוי על קוד ה-PDF ישירות (ה-Content Stream)
+            for xref in page.get_contents():
+                stream = doc.xref_stream(xref)
+                if stream:
+                    stream_str = stream.decode("latin1")
+                    stream_str = RGB_PATTERN.sub(clean_rgb, stream_str)
+                    stream_str = CMYK_PATTERN.sub(clean_cmyk, stream_str)
+                    doc.update_stream(xref, stream_str.encode("latin1"))
 
         # --- 2. המרת אותיות למקבילות באנגלית ---
-        if shrink_letters:
+        if shrink_letters_cb:
             dict_data = page.get_text("dict")
             for block in dict_data["blocks"]:
                 if "lines" in block:
@@ -89,7 +104,7 @@ def process_pdf(pdf_bytes, remove_yellow_only, remove_all_colors, shrink_letters
                                 page.insert_text(origin, new_text, fontsize=12, color=(0, 0, 0))
                                 
         # --- 3. העלמת פתרונות מלאים ---
-        if hide_solutions:
+        if hide_solutions_cb:
             sol_rects = page.search_for("פתרון") + page.search_for("קווים מנחים")
             q_rects = page.search_for("שאלה")
             
@@ -138,7 +153,7 @@ if uploaded_file is not None:
     st.success("הקובץ הועלה בהצלחה!")
     
     if st.button("נקה את המבחן"):
-        with st.spinner("מעבד את הקובץ..."):
+        with st.spinner("מעבד את הקובץ (עם מנגנון השכבות החדש לשמירה על טקסט)..."):
             
             cleaned_pdf_bytes = process_pdf(
                 uploaded_file.read(), 
